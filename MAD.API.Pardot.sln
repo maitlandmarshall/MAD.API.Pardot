@@ -5,7 +5,7 @@ VisualStudioVersion = 16.0.29806.167
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MAD.API.Pardot", "MAD.API.Pardot\MAD.API.Pardot.csproj", "{8FC82D21-D4D8-459F-BEAA-A27E47F6FF01}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MAD.API.Pardot.Tests", "MAD.API.Tests\MAD.API.Pardot.Tests.csproj", "{B2372180-5081-4703-A72B-F2F59BB70D64}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MAD.API.Pardot.Tests", "MAD.API.Pardot.Tests\MAD.API.Pardot.Tests.csproj", "{B2372180-5081-4703-A72B-F2F59BB70D64}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
