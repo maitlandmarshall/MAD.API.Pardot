@@ -7,13 +7,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading.Tasks;
 
 [assembly: InternalsVisibleTo("MAD.API.Pardot.Tests")]
 namespace MAD.API.Pardot
 {
-    public class PardotApiClient
+    public class PardotApiClient : IDisposable
     {
         private const int MaxQueryResults = 200;
         private const string ApiBaseUri = "https://pi.pardot.com/api/";
@@ -21,16 +23,23 @@ namespace MAD.API.Pardot
         private static BlockingCollection<object> ConcurrentRequests = new BlockingCollection<object>(5);
 
         public string ApiKey { get; set; }
-
         public string Email { get; }
         public string Password { get; }
         public string UserKey { get; }
+
+        private readonly HttpClient httpClient;
 
         public PardotApiClient(string email, string password, string userKey)
         {
             this.Email = email ?? throw new ArgumentNullException(nameof(email));
             this.Password = password ?? throw new ArgumentNullException(nameof(password));
             this.UserKey = userKey ?? throw new ArgumentNullException(nameof(userKey));
+
+            this.httpClient = new HttpClient();
+            this.httpClient.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+            this.httpClient.DefaultRequestHeaders.Connection.Add("keep-alive");
+            this.httpClient.Timeout = TimeSpan.FromMinutes(10);
+            this.httpClient.BaseAddress = new Uri(ApiBaseUri);
         }
 
         private string BuildRequestBody((string argName, object argValue)[] args)
@@ -52,6 +61,7 @@ namespace MAD.API.Pardot
                                 break;
                             default:
                                 argFinalValue = argValue.ToString();
+
                                 break;
                         }
 
@@ -63,66 +73,59 @@ namespace MAD.API.Pardot
             return $"{argSegment}&format=json";
         }
 
-        internal HttpWebRequest CreateWebRequest(string requestUri)
+        internal HttpRequestMessage CreateRequestMessage(string requestUri)
         {
-            HttpWebRequest request = HttpWebRequest.CreateHttp(requestUri.ToString());
-            request.KeepAlive = true;
+            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestUri);
 
             if (!String.IsNullOrEmpty(this.ApiKey))
-                request.Headers.Add(HttpRequestHeader.Authorization, $"Pardot api_key={this.ApiKey}, user_key={this.UserKey}");
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue($"Pardot", $"api_key={this.ApiKey}, user_key={this.UserKey}");
 
             return request;
         }
 
-        internal async Task<string> GetWebRequestResponseAsString(HttpWebRequest request, (string argName, object argValue)[] args)
+        internal async Task<string> GetWebRequestResponseAsString(HttpRequestMessage request, (string argName, object argValue)[] args)
         {
             const int maxRequestAttempts = 3;
             int requestAttempts = 1;
 
             while (true)
             {
-                try
+                ConcurrentRequests.Add(new object());
+
+                request.Content = new StringContent(this.BuildRequestBody(args), Encoding.UTF8, "application/x-www-form-urlencoded");
+
+                using (HttpResponseMessage response = await this.httpClient.SendAsync(request))
                 {
-                    ConcurrentRequests.Add(new object());
-
-                    using (Stream requestStream = await request.GetRequestStreamAsync())
-                    using (StreamWriter requestStreamWriter = new StreamWriter(requestStream))
+                    try
                     {
-                        await requestStreamWriter.WriteAsync(this.BuildRequestBody(args));
-                    }
+                        response.EnsureSuccessStatusCode();
 
-                    using (HttpWebResponse response = request.GetResponse() as HttpWebResponse)
-                    using (Stream responseStream = response.GetResponseStream())
-                    using (StreamReader sr = new StreamReader(responseStream))
-                    {
-                        string responseContent = await sr.ReadToEndAsync();
+                        string responseContent = await response.Content.ReadAsStringAsync();
                         return responseContent;
                     }
-                }
-                catch (Exception)
-                {
-                    if (requestAttempts >= maxRequestAttempts)
-                        throw;
+                    catch
+                    {
+                        if (requestAttempts >= maxRequestAttempts)
+                            throw;
 
-                    await Task.Delay(5000);
-                    request = this.CreateWebRequest(request.RequestUri.AbsoluteUri);
-                }
-                finally
-                {
-                    requestAttempts++;
-                    ConcurrentRequests.Take();
+                        await Task.Delay(5000);
+                        request = this.CreateRequestMessage(request.RequestUri.AbsoluteUri);
+                    }
+                    finally
+                    {
+                        requestAttempts++;
+                        ConcurrentRequests.Take();
+                    }
                 }
             }
         }
 
-        internal async Task<ResponseType> ExecuteApiRequestForRelativeUri<ResponseType>(string relativeUri, params (string argName, object argValue)[] args)
+        internal async Task<ResponseType> ExecuteApiRequest<ResponseType>(string relativeUri, params (string argName, object argValue)[] args)
         {
             if (String.IsNullOrEmpty(this.ApiKey) && relativeUri.Contains("login") == false)
                 await this.LoginAndGetApiKey();
 
-            Uri requestUri = new Uri(new Uri(ApiBaseUri), relativeUri);
-
-            HttpWebRequest request = this.CreateWebRequest(requestUri.ToString());
+            using HttpRequestMessage request = this.CreateRequestMessage(relativeUri);
             string responseContent = await this.GetWebRequestResponseAsString(request, args);
 
             try
@@ -135,7 +138,7 @@ namespace MAD.API.Pardot
                     {
                         this.ApiKey = null;
 
-                        return await this.ExecuteApiRequestForRelativeUri<ResponseType>(relativeUri, args);
+                        return await this.ExecuteApiRequest<ResponseType>(relativeUri, args);
                     }
                     else
                     {
@@ -154,7 +157,7 @@ namespace MAD.API.Pardot
 
         internal async Task<LoginResponse> LoginAndGetApiKey()
         {
-            LoginResponse response = await this.ExecuteApiRequestForRelativeUri<LoginResponse>(
+            LoginResponse response = await this.ExecuteApiRequest<LoginResponse>(
                 relativeUri: $"login/version/4",
                 ("email", this.Email),
                 ("password", this.Password),
@@ -168,7 +171,7 @@ namespace MAD.API.Pardot
 
         public async Task<Account> GetAccount()
         {
-            AccountResponse response = await this.ExecuteApiRequestForRelativeUri<AccountResponse>("account/version/4/do/read");
+            AccountResponse response = await this.ExecuteApiRequest<AccountResponse>("account/version/4/do/read");
 
             return response.Account;
         }
@@ -178,7 +181,7 @@ namespace MAD.API.Pardot
             if (emailId == 0)
                 throw new Exception($"{nameof(emailId)} must be greater than 0");
 
-            EmailResponse response = await this.ExecuteApiRequestForRelativeUri<EmailResponse>($"email/version/4/do/read/id/{emailId}");
+            EmailResponse response = await this.ExecuteApiRequest<EmailResponse>($"email/version/4/do/read/id/{emailId}");
 
             return response.Email;
         }
@@ -190,7 +193,7 @@ namespace MAD.API.Pardot
 
             do
             {
-                paginatedResponse = await this.ExecuteApiRequestForRelativeUri<QueryResponse<Visit>>("visit/version/4/do/query",
+                paginatedResponse = await this.ExecuteApiRequest<QueryResponse<Visit>>("visit/version/4/do/query",
                     ("visitor_ids", String.Join(",", visitorIds)),
                     ("offset", totalVisits.Count));
 
@@ -229,7 +232,7 @@ namespace MAD.API.Pardot
 
             do
             {
-                QueryResponse<TargetType> queryResponse = await this.ExecuteApiRequestForRelativeUri<QueryResponse<TargetType>>($"{pardotApiEndpointName}/version/4/do/query",
+                QueryResponse<TargetType> queryResponse = await this.ExecuteApiRequest<QueryResponse<TargetType>>($"{pardotApiEndpointName}/version/4/do/query",
                     ("output", "bulk"),
                     ("created_before", createdBefore),
                     ("created_after", createdAfter),
@@ -241,7 +244,10 @@ namespace MAD.API.Pardot
                     ("sort_order", sortOrder.ToString().ToLower())
                     );
 
-                List<TargetType> items = queryResponse.Result.Items;
+                List<TargetType> items = queryResponse.Result?.Items;
+
+                if (items is null)
+                    continue;
 
                 lastPaginatedResultCount = items.Count;
 
@@ -291,6 +297,11 @@ namespace MAD.API.Pardot
             } while (lastPaginatedResultCount == MaxQueryResults && (!take.HasValue || totalResult.Count < take.Value));
 
             return totalResult;
+        }
+
+        public void Dispose()
+        {
+            this.httpClient?.Dispose();
         }
     }
 }

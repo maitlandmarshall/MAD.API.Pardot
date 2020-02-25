@@ -17,4 +17,10 @@
     <ProjectReference Include="..\MAD.API.Pardot\MAD.API.Pardot.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="PardotApiKeys.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

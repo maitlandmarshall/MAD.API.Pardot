@@ -13,7 +13,7 @@ namespace MAD.API.Pardot.Api
             [JsonProperty("total_results")]
             public int? TotalResults { get; set; }
 
-            [JsonProperty("{},[]")]
+            [JsonProperty("*")]
             public List<T> Items { get; set; }
         }
 
