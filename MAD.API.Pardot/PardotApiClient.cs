@@ -15,7 +15,7 @@ using System.Threading.Tasks;
 [assembly: InternalsVisibleTo("MAD.API.Pardot.Tests")]
 namespace MAD.API.Pardot
 {
-    public class PardotApiClient : IDisposable
+    public sealed class PardotApiClient : IDisposable
     {
         private const int MaxQueryResults = 200;
         private const string ApiBaseUri = "https://pi.pardot.com/api/";
@@ -196,6 +196,9 @@ namespace MAD.API.Pardot
                 paginatedResponse = await this.ExecuteApiRequest<QueryResponse<Visit>>("visit/version/4/do/query",
                     ("visitor_ids", String.Join(",", visitorIds)),
                     ("offset", totalVisits.Count));
+
+                if (paginatedResponse.Result?.Items == null)
+                    break;
 
                 totalVisits.AddRange(paginatedResponse.Result.Items);
 
