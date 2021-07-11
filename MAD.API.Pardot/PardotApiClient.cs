@@ -128,31 +128,27 @@ namespace MAD.API.Pardot
             using HttpRequestMessage request = this.CreateRequestMessage(relativeUri);
             string responseContent = await this.GetWebRequestResponseAsString(request, args);
 
-            try
-            {
-                ResponseType result = JsonConvert.DeserializeObject<ResponseType>(responseContent);
+            ResponseType result = JsonConvert.DeserializeObject<ResponseType>(responseContent);
 
-                if (result is ApiResponse queryResponse && queryResponse.Attributes.ErrorCode.HasValue)
+            if (result is ApiResponse queryResponse && queryResponse.Attributes.ErrorCode.HasValue)
+            {
+                if (queryResponse.Attributes.ErrorCode == 1)
                 {
-                    if (queryResponse.Attributes.ErrorCode == 1)
-                    {
-                        this.ApiKey = null;
+                    this.ApiKey = null;
 
-                        return await this.ExecuteApiRequest<ResponseType>(relativeUri, args);
-                    }
-                    else
-                    {
-                        throw new Exception(queryResponse.Error);
-                    }
+                    return await this.ExecuteApiRequest<ResponseType>(relativeUri, args);
                 }
-
-                return result;
+                else if (queryResponse.Attributes.ErrorCode == 122)
+                {
+                    throw new PardotApiDailyRateLimitException(queryResponse);
+                }
+                else
+                {
+                    throw new PardotApiException(queryResponse);
+                }
             }
-            catch (Exception ex)
-            {
-                throw new Exception(responseContent, ex);
-            }
 
+            return result;
         }
 
         internal async Task<LoginResponse> LoginAndGetApiKey()
